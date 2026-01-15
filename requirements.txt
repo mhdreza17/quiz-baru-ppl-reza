@@ -1,0 +1,26 @@
+# Testing Framework
+pytest==7.4.3
+pytest-xdist==3.5.0
+pytest-timeout==2.2.0
+pytest-html==4.1.1
+pytest-cov==4.1.0
+
+# Selenium WebDriver
+selenium==4.15.2
+webdriver-manager==4.0.1
+
+# Database
+mysql-connector-python==8.2.0
+PyMySQL==1.1.0
+
+# Utilities
+python-dotenv==1.0.0
+requests==2.31.0
+
+# Code Quality
+flake8==6.1.0
+pylint==3.0.3
+black==23.12.0
+
+# Reporting
+allure-pytest==2.13.2

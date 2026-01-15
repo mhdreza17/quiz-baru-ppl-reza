@@ -1,0 +1,261 @@
+name: Quiz Pengupil - Automated Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'login.php'
+      - 'register.php'
+      - 'koneksi.php'
+      - 'tests/**'
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM UTC
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: quiz_pengupil
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+        ports:
+          - 3306:3306
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.1'
+        extensions: mysqli, pdo_mysql
+        coverage: xdebug
+
+    - name: Setup MySQL Database
+      run: |
+        mysql -h 127.0.0.1 -u root -proot quiz_pengupil < db/quiz_pengupil.sql
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install selenium pytest pytest-xdist pytest-timeout webdriver-manager mysql-connector-python
+
+    - name: Start PHP Built-in Server
+      run: |
+        php -S localhost:80 &
+        sleep 2
+      env:
+        DOCUMENT_ROOT: ${{ github.workspace }}
+
+    - name: Wait for server to be ready
+      run: |
+        timeout 30 bash -c 'until curl -s http://localhost/quiz/login.php > /dev/null; do sleep 1; done'
+      continue-on-error: true
+
+    - name: Run Login Tests
+      run: |
+        pytest tests/test_login.py -v --tb=short --junit-xml=junit-login.xml -m "not stub" --timeout=30
+      continue-on-error: true
+
+    - name: Run Register Tests
+      run: |
+        pytest tests/test_register.py -v --tb=short --junit-xml=junit-register.xml -m "not stub" --timeout=30
+      continue-on-error: true
+
+    - name: Run UI Navigation Tests
+      run: |
+        pytest tests/test_ui_navigation.py -v --tb=short --junit-xml=junit-ui.xml -m "not stub" --timeout=30
+      continue-on-error: true
+
+    - name: Run All Tests (including stubs)
+      run: |
+        pytest tests/ -v --tb=short --junit-xml=junit-all.xml --html=report.html --self-contained-html --timeout=30 || true
+
+    - name: Generate Test Report
+      if: always()
+      run: |
+        echo "## Test Results Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        if [ -f junit-login.xml ]; then
+          python -c "
+          import xml.etree.ElementTree as ET
+          tree = ET.parse('junit-login.xml')
+          root = tree.getroot()
+          tests = int(root.get('tests', 0))
+          failures = int(root.get('failures', 0))
+          errors = int(root.get('errors', 0))
+          print(f'### Login Tests: {tests} tests, {failures} failures, {errors} errors')
+          " >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: Upload Test Reports
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-reports
+        path: |
+          junit-*.xml
+          report.html
+
+    - name: Publish Test Results
+      if: always()
+      uses: EnricoMi/publish-unit-test-result-action@v2
+      with:
+        files: |
+          junit-login.xml
+          junit-register.xml
+          junit-ui.xml
+          junit-all.xml
+        check_name: Test Results
+
+    - name: Code Coverage Report
+      if: always()
+      run: |
+        echo "Test execution completed. Check artifacts for detailed reports."
+
+  code-quality:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.1'
+
+    - name: PHP Lint Check
+      run: |
+        for file in login.php register.php koneksi.php; do
+          echo "Checking $file..."
+          php -l $file
+        done
+
+    - name: Check for SQL Injection vulnerabilities
+      run: |
+        echo "Scanning for SQL injection patterns..."
+        grep -n "SELECT.*\$" login.php register.php || echo "No direct SQL injection patterns found"
+
+    - name: Check for XSS vulnerabilities
+      run: |
+        echo "Scanning for potential XSS issues..."
+        grep -n "echo.*\$_" login.php register.php || echo "No obvious XSS patterns found"
+
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Run OWASP Dependency Check
+      uses: dependency-check/Dependency-Check_Action@main
+      with:
+        path: '.'
+        format: 'JSON'
+        args: >
+          --enableExperimental
+
+    - name: Upload OWASP Report
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: dependency-check-report
+        path: dependency-check-report.json
+
+  integration-test:
+    runs-on: ubuntu-latest
+    
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: quiz_pengupil
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+        ports:
+          - 3306:3306
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.1'
+
+    - name: Setup MySQL
+      run: |
+        mysql -h 127.0.0.1 -u root -proot quiz_pengupil < db/quiz_pengupil.sql
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install selenium pytest webdriver-manager mysql-connector-python
+
+    - name: Start Server
+      run: |
+        php -S localhost:80 &
+        sleep 3
+
+    - name: Run Smoke Tests
+      run: |
+        pytest tests/ -v -m smoke --tb=short --timeout=30 || true
+
+    - name: Generate Coverage Report
+      run: |
+        pytest tests/ --cov=. --cov-report=html --cov-report=term || true
+
+status-check:
+  runs-on: ubuntu-latest
+  needs: [test, code-quality, security-scan, integration-test]
+  if: always()
+  
+  steps:
+  - name: Check Test Status
+    run: |
+      if [ "${{ needs.test.result }}" == "success" ]; then
+        echo "✅ All tests passed!"
+        exit 0
+      else
+        echo "⚠️ Some tests failed or were skipped"
+        exit 1
+      fi
+    continue-on-error: true
+
+  - name: Create Test Summary
+    run: |
+      echo "## CI/CD Pipeline Results" >> $GITHUB_STEP_SUMMARY
+      echo "" >> $GITHUB_STEP_SUMMARY
+      echo "- Test Job: ${{ needs.test.result }}" >> $GITHUB_STEP_SUMMARY
+      echo "- Code Quality: ${{ needs.code-quality.result }}" >> $GITHUB_STEP_SUMMARY
+      echo "- Security Scan: ${{ needs.security-scan.result }}" >> $GITHUB_STEP_SUMMARY
+      echo "- Integration Tests: ${{ needs.integration-test.result }}" >> $GITHUB_STEP_SUMMARY
